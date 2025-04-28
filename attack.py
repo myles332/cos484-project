@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 warnings.simplefilter("ignore")
 
 DEFAULT_SYSTEM_PROMPT = """<<SYS>> You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Please ensure that your responses are socially unbiased and positive in nature. If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information. <</SYS>> """
-
+CACHE_DIR = os.getenv("HF_HOME")
 
 def prepend_sys_prompt(sentence, args):
     if args.use_system_prompt:
@@ -93,6 +93,7 @@ def main():
             trust_remote_code=True,
             low_cpu_mem_usage=True,
             device_map="auto",
+            cache_dir=CACHE_DIR,
         )
     else:
         model = AutoModelForCausalLM.from_pretrained(
@@ -100,9 +101,10 @@ def main():
             torch_dtype=torch.float16,
             low_cpu_mem_usage=True,
             device_map="auto",
+            cache_dir=CACHE_DIR
         )
 
-    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
+    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH, cache_dir=CACHE_DIR)
 
     logging.info(f"Model size: {model.get_memory_footprint()/1e9}")
     logging.info(f"Model name: {fname}")
