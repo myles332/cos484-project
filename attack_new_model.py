@@ -30,7 +30,7 @@ def get_sentence_embedding(model, tokenizer, sentence):
     tokenized = tokenizer(sentence, return_tensors="pt", add_special_tokens=False).to(
         model.device
     )
-    #embedded = word_embeddings(tokenized.input_ids)
+    embedded = word_embeddings(tokenized.input_ids)
     return tokenized
 
 
@@ -86,7 +86,7 @@ def main():
     if not os.path.exists(f"outputs/{fname}"):
         os.makedirs(f"outputs/{fname}")
 
-    if "falcon" in args.model or "mpt" in args.model:
+    if "falcon" in args.model or "mpt" in args.model or "Instruct" in args.model:
         model = AutoModelForCausalLM.from_pretrained(
             WEIGHTS_PATH,
             torch_dtype=torch.bfloat16,
@@ -125,7 +125,7 @@ def main():
 
         for sentence in tqdm(lines):
             try:
-                if "falcon" in args.model or "mpt" in args.model:
+                if "falcon" in args.model or "mpt" in args.model or "Instruct" in args.model:
                     ground_truth_generation = model.generate(
                         tokenizer(sentence, return_tensors="pt").input_ids.to("cuda"),
                         max_new_tokens=100,
@@ -163,7 +163,7 @@ def main():
 
         for sentence in tqdm(lines):
             try:
-                if "falcon" in args.model or "mpt" in args.model:
+                if "falcon" in args.model or "mpt" in args.model or "Instruct" in args.model:
                     ground_truth_generation = model.generate(
                         tokenizer(sentence, return_tensors="pt").input_ids.to("cuda"),
                         max_new_tokens=100,
@@ -207,7 +207,7 @@ def main():
 
             for sentence in tqdm(lines):
                 try:
-                    if "falcon" in args.model or "mpt" in args.model:
+                    if "falcon" in args.model or "mpt" in args.model or "Instruct" in args.model:
                         ground_truth_generation = model.generate(
                             tokenizer(sentence, return_tensors="pt").input_ids.to(
                                 "cuda"
@@ -252,7 +252,7 @@ def main():
             for sentence in tqdm(lines):
                 try:
                     # get ground truth generation
-                    if "falcon" in args.model or "mpt" in args.model:
+                    if "falcon" in args.model or "mpt" in args.model or "Instruct" in args.model:
                         ground_truth_generation = model.generate(
                             tokenizer(sentence, return_tensors="pt").input_ids.to(
                                 "cuda"
@@ -296,7 +296,7 @@ def main():
             for sentence in tqdm(lines):
                 try:
                     # get ground truth generation
-                    if "falcon" in args.model or "mpt" in args.model:
+                    if "falcon" in args.model or "mpt" in args.model or "Instruct" in args.model:
                         ground_truth_generation = model.generate(
                             tokenizer(sentence, return_tensors="pt").input_ids.to(
                                 "cuda"
