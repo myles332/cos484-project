@@ -16,10 +16,18 @@ warnings.simplefilter("ignore")
 DEFAULT_SYSTEM_PROMPT = """<<SYS>> You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Please ensure that your responses are socially unbiased and positive in nature. If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information. <</SYS>> """
 
 
-def prepend_sys_prompt(sentence, args):
-    if args.use_system_prompt:
-        sentence = DEFAULT_SYSTEM_PROMPT + sentence
-    return sentence
+def prepend_sys_prompt(sentence, args, tokenizer):
+    if "Instruct" in args.model:
+        return tokenizer.apply_chat_template(
+            [{"role": "user", "content": sentence}],
+            tokenize=False,
+            add_generation_prompt=True
+        )
+
+    elif args.use_system_prompt:
+        return DEFAULT_SYSTEM_PROMPT + sentence
+    else:
+        return sentence
 
 
 def get_sentence_embedding(model, tokenizer, sentence):
@@ -115,7 +123,7 @@ def main():
             lines = f.readlines()
 
     # prepend sys prompt
-    lines = [prepend_sys_prompt(l, args) for l in lines]
+    lines = [prepend_sys_prompt(l, args, tokenizer) for l in lines]
 
     if args.use_greedy:
         logging.info(f"Running greedy")
