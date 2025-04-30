@@ -1,5 +1,4 @@
 import os
-import tqdm
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -17,10 +16,9 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 
 # Add noise to parameters
-for name, param in tqdm(model.named_parameters()):
-    if param.requires_grad:
-        noise = torch.randn_like(param) * NOISE_STDDEV
-        param.data += noise
+with torch.no_grad():
+    for param in model.parameters():
+        param.add_(torch.randn_like(param) * NOISE_STDDEV)
 
 # Save model with modified weights
 model.save_pretrained(OUTPUT_DIR)
