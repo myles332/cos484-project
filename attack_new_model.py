@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 import argparse
-from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 import logging
 from tqdm import tqdm
@@ -30,8 +30,8 @@ def get_sentence_embedding(model, tokenizer, sentence):
     tokenized = tokenizer(sentence, return_tensors="pt", add_special_tokens=False).to(
         model.device
     )
-    embedded = word_embeddings(tokenized.input_ids)
-    return embedded
+    #embedded = word_embeddings(tokenized.input_ids)
+    return tokenized
 
 
 def main():
@@ -95,14 +95,8 @@ def main():
             device_map="auto",
         )
     else:
-        config = AutoConfig.from_pretrained(
-            WEIGHTS_PATH,
-            rope_scaling={"name": "dynamic", "factor": 2.0},  # Required for LLaMA-3
-        )
-
         model = AutoModelForCausalLM.from_pretrained(
             WEIGHTS_PATH,
-            config=config,
             torch_dtype=torch.float16,
             low_cpu_mem_usage=True,
             device_map="auto",
