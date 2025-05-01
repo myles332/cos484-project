@@ -16,30 +16,27 @@ warnings.simplefilter("ignore")
 DEFAULT_SYSTEM_PROMPT = """<<SYS>> You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Please ensure that your responses are socially unbiased and positive in nature. If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information. <</SYS>> """
 
 
-def prepend_sys_prompt(sentence, args, tokenizer):
-    if "Instruct" in args.model:
-        return tokenizer.apply_chat_template(
-            [{"role": "user", "content": sentence}],
+def prepend_sys_prompt(sentence, args, tokenizer, device):
+    if "llama-3" in args.model.lower():  # detect LLaMA 3
+        messages = [{"role": "user", "content": sentence.strip()}]
+        if args.use_system_prompt:
+            messages.insert(0, {"role": "system", "content": DEFAULT_SYSTEM_PROMPT})
+
+        prompt_str = tokenizer.apply_chat_template(
+            messages,
             tokenize=False,
-            add_generation_prompt=True
+            add_generation_prompt=False
         )
+        
+        return tokenizer(prompt_str, return_tensors="pt", return_attention_mask=True, truncation=True)
 
-    elif args.use_system_prompt:
-        return DEFAULT_SYSTEM_PROMPT + sentence
     else:
-        return sentence
+        if args.use_system_prompt:
+            return DEFAULT_SYSTEM_PROMPT + sentence
+        else:
+            return sentence
 
 
-def get_sentence_embedding(model, tokenizer, sentence):
-    sentence = sentence.strip().replace('"', "")
-    word_embeddings = model.get_input_embeddings()
-
-    # Embed the sentence
-    tokenized = tokenizer(sentence, return_tensors="pt", add_special_tokens=False).to(
-        model.device
-    )
-    embedded = word_embeddings(tokenized.input_ids)
-    return tokenized
 
 
 def main():
@@ -94,7 +91,7 @@ def main():
     if not os.path.exists(f"outputs/{fname}"):
         os.makedirs(f"outputs/{fname}")
 
-    if "falcon" in args.model or "mpt" in args.model or "Instruct" in args.model:
+    if "falcon" in args.model or "mpt" in args.model:
         model = AutoModelForCausalLM.from_pretrained(
             WEIGHTS_PATH,
             torch_dtype=torch.bfloat16,
@@ -123,43 +120,60 @@ def main():
             lines = f.readlines()
 
     # prepend sys prompt
-    lines = [prepend_sys_prompt(l, args, tokenizer) for l in lines]
+    #lines = [prepend_sys_prompt(l, args, tokenizer, model.device) for l in lines]
+    raw_prompts_input = [l.strip() for l in lines]
+    """if "llama-3" in args.model.lower():
+        lines = [prepend_sys_prompt(l, args, tokenizer, model.device) for l in raw_prompts_input]
+    else:
+        lines = [prepend_sys_prompt(l, args, tokenizer, model.device) for l in raw_prompts_input]"""
+    
+    if "llama-3" in args.model.lower():
+        tokenized_inputs = [
+            prepend_sys_prompt(l, args, tokenizer, model.device)
+            for l in raw_prompts_input
+        ]
+    else:
+        lines = [
+            prepend_sys_prompt(l, args, tokenizer, model.device)
+            for l in raw_prompts_input
+        ]
+
 
     if args.use_greedy:
         logging.info(f"Running greedy")
         prompts = []
         outputs = []
         model.eval()
+        raw_prompts = []
 
-        for sentence in tqdm(lines):
+        for i in tqdm(range(len(raw_prompts_input))):
+            original_prompt = raw_prompts_input[i]
             try:
-                if "falcon" in args.model or "mpt" in args.model or "Instruct" in args.model:
-                    ground_truth_generation = model.generate(
-                        tokenizer(sentence, return_tensors="pt").input_ids.to("cuda"),
-                        max_new_tokens=100,
-                        do_sample=False,
-                        num_return_sequences=1,
-                    )
-                else:
-                    # get ground truth generation
-                    ground_truth_embeds = get_sentence_embedding(
-                        model, tokenizer, sentence
-                    )
-                    ground_truth_generation = model.generate(
-                        inputs_embeds=ground_truth_embeds,
-                        max_new_tokens=100,
-                        do_sample=False,
-                        num_return_sequences=1,
-                    )
-                ground_truth_generation = tokenizer.batch_decode(
-                    ground_truth_generation
+                inputs = {k: v.to(model.device) for k, v in tokenized_inputs[i].items()} 
+                # get ground truth generation
+                
+                ground_truth_generation = model.generate(
+                    input_ids=inputs["input_ids"],
+                    attention_mask=inputs["attention_mask"],
+                    max_new_tokens=100,
+                    do_sample=False,
+                    num_return_sequences=1,
+                    pad_token_id=tokenizer.eos_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
                 )
+
+                ground_truth_generation = [
+                    tokenizer.decode(output, skip_special_tokens=True).split("assistant\n")[-1].strip() for output in ground_truth_generation
+                ]    
                 outputs.extend(ground_truth_generation)
-                prompts.extend([sentence] * args.n_sample)
-            except:
+                raw_prompts.extend([original_prompt] * args.n_sample)
+
+            except Exception as e:
+                print('Error: ', e)
                 continue
+
             results = pd.DataFrame()
-            results["prompt"] = [line.strip() for line in prompts]
+            results["prompt"] = [line.strip() for line in raw_prompts]
             results["output"] = outputs
             results.to_csv(f"outputs/{fname}/output_greedy.csv")
 
@@ -168,40 +182,38 @@ def main():
         prompts = []
         outputs = []
         model.eval()
+        raw_prompts = []
 
-        for sentence in tqdm(lines):
+        for i in tqdm(range(len(raw_prompts_input))):
+            original_prompt = raw_prompts_input[i]
             try:
-                if "falcon" in args.model or "mpt" in args.model or "Instruct" in args.model:
-                    ground_truth_generation = model.generate(
-                        tokenizer(sentence, return_tensors="pt").input_ids.to("cuda"),
-                        max_new_tokens=100,
-                        do_sample=True,
-                        top_p=0.9,
-                        temperature=0.1,
-                        num_return_sequences=1,
-                    )
-                else:
-                    # get ground truth generation
-                    ground_truth_embeds = get_sentence_embedding(
-                        model, tokenizer, sentence
-                    )
-                    ground_truth_generation = model.generate(
-                        inputs_embeds=ground_truth_embeds,
-                        max_new_tokens=100,
-                        do_sample=True,
-                        top_p=0.9,
-                        temperature=0.1,
-                        num_return_sequences=1,
-                    )
-                ground_truth_generation = tokenizer.batch_decode(
-                    ground_truth_generation
+
+                inputs = {k: v.to(model.device) for k, v in tokenized_inputs[i].items()}  #  move to GPU
+                ground_truth_generation = model.generate(
+                    input_ids=inputs["input_ids"],
+                    attention_mask=inputs["attention_mask"],
+                    max_new_tokens=100,
+                    do_sample=True,
+                    top_p=0.9,
+                    temperature=0.1,
+                    num_return_sequences=1,
+                    pad_token_id=tokenizer.eos_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
                 )
+
+                ground_truth_generation = [
+                    tokenizer.decode(output, skip_special_tokens=True).split("assistant\n")[-1].strip() for output in ground_truth_generation
+                ]           
+
                 outputs.extend(ground_truth_generation)
-                prompts.extend([sentence] * args.n_sample)
-            except:
+                raw_prompts.extend([original_prompt] * args.n_sample)
+
+            except Exception as e:
+                print('Error: ', e)
                 continue
+
             results = pd.DataFrame()
-            results["prompt"] = [line.strip() for line in prompts]
+            results["prompt"] = [line.strip() for line in raw_prompts]
             results["output"] = outputs
             results.to_csv(f"outputs/{fname}/output_default.csv")
 
@@ -212,40 +224,38 @@ def main():
             prompts = []
             outputs = []
             model.eval()
+            raw_prompts = []
 
-            for sentence in tqdm(lines):
+            for i in tqdm(range(len(raw_prompts_input))):
+                original_prompt = raw_prompts_input[i]
                 try:
-                    if "falcon" in args.model or "mpt" in args.model or "Instruct" in args.model:
-                        ground_truth_generation = model.generate(
-                            tokenizer(sentence, return_tensors="pt").input_ids.to(
-                                "cuda"
-                            ),
-                            max_new_tokens=100,
-                            temperature=temp,
-                            do_sample=True,
-                            num_return_sequences=args.n_sample,
-                        )
-                    else:
-                        # get ground truth generation
-                        ground_truth_embeds = get_sentence_embedding(
-                            model, tokenizer, sentence
-                        )
-                        ground_truth_generation = model.generate(
-                            inputs_embeds=ground_truth_embeds,
-                            max_new_tokens=100,
-                            temperature=temp,
-                            do_sample=True,
-                            num_return_sequences=args.n_sample,
-                        )
-                    ground_truth_generation = tokenizer.batch_decode(
-                        ground_truth_generation
+                
+                    # get ground truth generation
+                    inputs = {k: v.to(model.device) for k, v in tokenized_inputs[i].items()}  # move to GPU
+
+                    ground_truth_generation = model.generate(
+                        input_ids=inputs["input_ids"],
+                        attention_mask=inputs["attention_mask"],
+                        max_new_tokens=100,
+                        temperature=temp,
+                        do_sample=True,
+                        num_return_sequences=args.n_sample,
+                        pad_token_id=tokenizer.eos_token_id,
+                        eos_token_id=tokenizer.eos_token_id,
                     )
+
+                    ground_truth_generation = [
+                        tokenizer.decode(output, skip_special_tokens=True).split("assistant\n")[-1].strip() for output in ground_truth_generation
+                    ]    
+
                     outputs.extend(ground_truth_generation)
-                    prompts.extend([sentence] * args.n_sample)
-                except:
+                    raw_prompts.extend([original_prompt] * args.n_sample)
+                except Exception as e:
+                    print('Error: ', e)
                     continue
+
                 results = pd.DataFrame()
-                results["prompt"] = [line.strip() for line in prompts]
+                results["prompt"] = [line.strip() for line in raw_prompts]
                 results["output"] = outputs
                 results.to_csv(f"outputs/{fname}/output_temp_{temp}.csv")
 
@@ -256,41 +266,36 @@ def main():
             outputs = []
             prompts = []
             model.eval()
+            raw_prompts = []
 
-            for sentence in tqdm(lines):
+            for i in tqdm(range(len(raw_prompts_input))):
+                original_prompt = raw_prompts_input[i]
                 try:
-                    # get ground truth generation
-                    if "falcon" in args.model or "mpt" in args.model or "Instruct" in args.model:
-                        ground_truth_generation = model.generate(
-                            tokenizer(sentence, return_tensors="pt").input_ids.to(
-                                "cuda"
-                            ),
-                            max_new_tokens=100,
-                            top_p=top_p,
-                            do_sample=True,
-                            num_return_sequences=args.n_sample,
-                        )
-                    else:
-                        ground_truth_embeds = get_sentence_embedding(
-                            model, tokenizer, sentence
-                        )
+                    inputs = {k: v.to(model.device) for k, v in tokenized_inputs[i].items()}  # move to GPU
 
-                        ground_truth_generation = model.generate(
-                            inputs_embeds=ground_truth_embeds,
-                            max_new_tokens=100,
-                            top_p=top_p,
-                            do_sample=True,
-                            num_return_sequences=args.n_sample,
-                        )
-                    ground_truth_generation = tokenizer.batch_decode(
-                        ground_truth_generation
+
+                    ground_truth_generation = model.generate(
+                        input_ids=inputs["input_ids"],
+                        attention_mask=inputs["attention_mask"],
+                        max_new_tokens=100,
+                        top_p=top_p,
+                        do_sample=True,
+                        num_return_sequences=args.n_sample,
+                        pad_token_id=tokenizer.eos_token_id,
+                        eos_token_id=tokenizer.eos_token_id,
                     )
+
+                    ground_truth_generation = [
+                        tokenizer.decode(output, skip_special_tokens=True).split("assistant\n")[-1].strip() for output in ground_truth_generation
+                    ]       
+
                     outputs.extend(ground_truth_generation)
-                    prompts.extend([sentence] * args.n_sample)
-                except:
+                    raw_prompts.extend([original_prompt] * args.n_sample)
+                except Exception as e:
                     continue
+
                 results = pd.DataFrame()
-                results["prompt"] = [line.strip() for line in prompts]
+                results["prompt"] = [line.strip() for line in raw_prompts]
                 results["output"] = outputs
                 results.to_csv(f"outputs/{fname}/output_topp_{top_p}.csv")
 
@@ -300,41 +305,37 @@ def main():
             outputs = []
             prompts = []
             model.eval()
+            raw_prompts = []
 
-            for sentence in tqdm(lines):
+            for i in tqdm(range(len(raw_prompts_input))):
+                original_prompt = raw_prompts_input[i]
                 try:
-                    # get ground truth generation
-                    if "falcon" in args.model or "mpt" in args.model or "Instruct" in args.model:
-                        ground_truth_generation = model.generate(
-                            tokenizer(sentence, return_tensors="pt").input_ids.to(
-                                "cuda"
-                            ),
-                            max_new_tokens=100,
-                            top_k=top_k,
-                            do_sample=True,
-                            num_return_sequences=args.n_sample,
-                        )
-                    else:
-                        ground_truth_embeds = get_sentence_embedding(
-                            model, tokenizer, sentence
-                        )
 
-                        ground_truth_generation = model.generate(
-                            inputs_embeds=ground_truth_embeds,
-                            max_new_tokens=100,
-                            top_k=top_k,
-                            do_sample=True,
-                            num_return_sequences=args.n_sample,
-                        )
-                    ground_truth_generation = tokenizer.batch_decode(
-                        ground_truth_generation
+                    inputs = {k: v.to(model.device) for k, v in tokenized_inputs[i].items()}  # move to GPU
+                    ground_truth_generation = model.generate(
+                        input_ids=inputs["input_ids"],
+                        attention_mask=inputs["attention_mask"],
+                        max_new_tokens=100,
+                        top_k=top_k,
+                        do_sample=True,
+                        num_return_sequences=args.n_sample,
+                        pad_token_id=tokenizer.eos_token_id,
+                        eos_token_id=tokenizer.eos_token_id,
                     )
+
+                    ground_truth_generation = [
+                        tokenizer.decode(output, skip_special_tokens=True).split("assistant\n")[-1].strip() for output in ground_truth_generation
+                    ]
+
                     outputs.extend(ground_truth_generation)
-                    prompts.extend([sentence] * args.n_sample)
-                except:
+                    raw_prompts.extend([original_prompt] * args.n_sample)
+
+                except Exception as e:
+                    print('Error: ', e)
                     continue
+
                 results = pd.DataFrame()
-                results["prompt"] = [line.strip() for line in prompts]
+                results["prompt"] = [line.strip() for line in raw_prompts]
                 results["output"] = outputs
                 results.to_csv(f"outputs/{fname}/output_topk_{top_k}.csv")
 
